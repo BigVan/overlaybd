@@ -52,15 +52,38 @@ public:
     }
 
     ~ImageFile() {
-        delete m_file;
-        delete m_prefetcher;
-    }
+        LOG_INFO("delete image file `", lowersKey);
 
-    int close() override {
-        m_status = -1;
-        if (dl_thread_jh != nullptr)
-            photon::thread_join(dl_thread_jh);
-        return m_file->close();
+        auto it = image_service.opened_lowers.find(lowersKey);
+        if (it != image_service.opened_lowers.end()) {
+            int ref = --it->second->ref_count;
+            if (ref == 0) {
+                LOG_INFO("delete lower_files `", it->second->key);
+                delete it->second;
+                image_service.opened_lowers.erase(it);
+
+                for (int i = 0; i < lower_file_keys.size(); i++) {
+                    std::string &key = lower_file_keys[i];
+                    LOG_INFO("delete file for key `", key);
+                    auto it = image_service.opened_files.find(key);
+                    if (it == image_service.opened_files.end())
+                        continue;
+                    int ref = --it->second->ref_count;
+                    LOG_INFO("delete file ref `", ref);
+                    if (ref == 0) {
+                        LOG_INFO("delete file `", it->second->key);
+                        delete it->second;
+                        image_service.opened_files.erase(it);
+                    }
+                }
+            }
+        }
+
+        if (upper_file != nullptr) {
+            delete upper_file;
+        }
+
+        delete m_prefetcher;
     }
 
     int fstat(struct stat *buf) override {
@@ -95,20 +118,27 @@ public:
     int open_lower_layer(FileSystem::IFile *&file,
                          ImageConfigNS::LayerConfig &layer, int index);
 
+    int close() {
+        m_status = -1;
+        return 0;
+    }
+
     std::string m_exception;
     int m_status = 0; // 0: not started, 1: running, -1 exit
-
     size_t size;
     uint64_t num_lbas;
     uint32_t block_size;
     bool read_only = false;
 
+
 private:
     FileSystem::Prefetcher* m_prefetcher = nullptr;
     ImageConfigNS::ImageConfig conf;
-    std::list<BKDL::BkDownload *> dl_list;
-    photon::join_handle *dl_thread_jh = nullptr;
     ImageService &image_service;
+    LSMT::IFileRW *upper_file = nullptr;
+    LSMT::IFileRO *lower_file = nullptr;
+    std::string lowersKey;
+    std::vector<std::string> lower_file_keys;
 
     int init_image_file();
     void set_failed(std::string reason);
@@ -118,5 +148,6 @@ private:
     FileSystem::IFile *__open_ro_file(const std::string &);
     FileSystem::IFile *__open_ro_remote(const std::string &dir,
                                         const std::string &, const uint64_t, int);
-    void start_bk_dl_thread();
+    FileSystem::IFile *__open_ro_remote_share(const std::string &dir,
+                                        const std::string &, const uint64_t);
 };

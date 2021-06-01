@@ -6,7 +6,7 @@
     "ioEngine": 1,
     "download": {
         "enable": true,
-        "delay": 600,
+        "delay": 30,
         "delayExtra": 30,
         "maxMBps": 100
     },

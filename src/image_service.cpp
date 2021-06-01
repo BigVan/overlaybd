@@ -229,16 +229,16 @@ int ImageService::init() {
             LOG_ERROR_RETURN(0, -1, "create registryfs failed.");
         }
 
-        auto tar_fs = FileSystem::new_tar_fs_adaptor(registry_fs);
-        if (tar_fs == nullptr) {
-            delete registry_fs;
-            LOG_ERROR_RETURN(0, -1, "create tar_fs failed.");
-        }
+        // auto tar_fs = FileSystem::new_tar_fs_adaptor(registry_fs);
+        // if (tar_fs == nullptr) {
+        //     delete registry_fs;
+        //     LOG_ERROR_RETURN(0, -1, "create tar_fs failed.");
+        // }
 
         auto registry_cache_fs = FileSystem::new_localfs_adaptor(
             global_conf.registryCacheDir().c_str());
         if (registry_cache_fs == nullptr) {
-            delete tar_fs;
+            delete registry_fs;
             LOG_ERROR_RETURN(0, -1, "new_localfs_adaptor for ` failed",
                              global_conf.registryCacheDir().c_str());
             return false;
@@ -247,12 +247,12 @@ int ImageService::init() {
         LOG_INFO("create cache with size: ` GB",
                  global_conf.registryCacheSizeGB());
         global_fs.remote_fs = FileSystem::new_full_file_cached_fs(
-            tar_fs, registry_cache_fs, 256 * 1024 /* refill unit 256KB */,
+            registry_fs, registry_cache_fs, 256 * 1024 /* refill unit 256KB */,
             global_conf.registryCacheSizeGB() /*GB*/, 10000000,
             (uint64_t)1048576 * 4096, nullptr);
 
         if (global_fs.remote_fs == nullptr) {
-            delete tar_fs;
+            delete registry_fs;
             delete registry_cache_fs;
             LOG_ERROR_RETURN(0, -1,
                              "create remotefs (registryfs + cache) failed.");

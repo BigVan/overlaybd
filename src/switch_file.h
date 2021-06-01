@@ -19,13 +19,16 @@
 
 namespace FileSystem {
 
-// switch to local file after background download finished, and audit for local file pread operations.
-// if initialized with local file, only audit for pread.
-class ISwitchFile : public IFile {
+class ISwitchFile: public IFile {
 public:
-    virtual void set_switch_file(const char *filepath) = 0;
+    void start_download(const std::string &digest, int delay_sec, int max_MB_ps, int max_try);
 };
 
-extern "C" ISwitchFile *new_switch_file(IFile *source, bool local=false, const char* filepath=nullptr);
+// switch to local file after background download finished, and audit for local file pread operations.
+// if initialized with local file, only audit for pread.
 
+extern "C" ISwitchFile *new_switch_file(IFile *file, bool local=false, const char* filepath=nullptr);
+
+extern "C" ISwitchFile *new_switch_file_with_download(IFile *file, IFile *source, const std::string &digest, const char* file_path,
+                                                        int download_delay, int extra, int max_MB_ps, int max_try);
 } // namespace FileSystem

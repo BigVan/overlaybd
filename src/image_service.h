@@ -18,9 +18,22 @@
 
 #include <string>
 #include "config.h"
+#include "overlaybd/fs/forwardfs.h"
+#include "overlaybd/string-keyed.h"
 
 namespace FileSystem {
-class IFileSystem;
+    class RefFile: public ForwardFile_Ownership {
+    public:
+        RefFile(IFile *file): ForwardFile_Ownership(file, true) {
+            ref_count = 1;
+        }
+        RefFile(IFile *file, const std::string &s): ForwardFile_Ownership(file, true){
+            ref_count = 1;
+            key = s;
+        }
+        std::string key;
+        int ref_count = 0;
+    };
 }
 
 typedef enum {
@@ -44,6 +57,8 @@ public:
     ImageFile *create_image_file(const char *config_path);
     ImageConfigNS::GlobalConfig global_conf;
     struct GlobalFs global_fs;
+    unordered_map_string_key<FileSystem::RefFile *> opened_files;
+    unordered_map_string_key<FileSystem::RefFile *> opened_lowers;
 
 private:
     int read_global_config_and_set();

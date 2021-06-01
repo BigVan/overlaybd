@@ -334,6 +334,7 @@ static void dev_close(struct tcmu_device *dev) {
         malloc_trim(128 * 1024);
         close_cnt = 0;
     }
+    LOG_INFO("dev closed");
     return;
 }
 

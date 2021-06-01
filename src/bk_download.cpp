@@ -36,6 +36,8 @@ static constexpr size_t ALIGNMENT = 4096;
 
 namespace BKDL {
 
+bool downloading = false;
+
 std::string sha256sum(const char* fn) {
     constexpr size_t BUFFERSIZE = 65536;
     int fd = open(fn, O_RDONLY | O_DIRECT);
@@ -73,8 +75,7 @@ std::string sha256sum(const char* fn) {
     return "sha256:" + std::string(res, SHA256_DIGEST_LENGTH*2);
 }
 
-bool check_downloaded(const std::string &dir) {
-    std::string fn = dir + "/" + COMMIT_FILE_NAME;
+bool check_downloaded(const std::string &path) {
     auto lfs = FileSystem::new_localfs_adaptor();
     if (!lfs) {
         LOG_ERROR("new_localfs_adaptor() return NULL");
@@ -82,14 +83,12 @@ bool check_downloaded(const std::string &dir) {
     }
     DEFER({ delete lfs; });
 
-    if (lfs->access(fn.c_str(), 0) == 0)
+    if (lfs->access(path.c_str(), 0) == 0)
         return true;
     return false;
 }
 
-static std::set<std::string> lock_files;
-
-ssize_t filecopy(IFile *infile, IFile *outfile, size_t bs, int retry_limit, int &running) {
+ssize_t filecopy(IFile *infile, IFile *outfile, size_t bs, int retry_limit, bool &running) {
     if (bs == 0)
         LOG_ERROR_RETURN(EINVAL, -1, "bs should not be 0");
     void *buff = nullptr;
@@ -102,8 +101,8 @@ ssize_t filecopy(IFile *infile, IFile *outfile, size_t bs, int retry_limit, int 
     off_t offset = 0;
     ssize_t count = bs;
     while (count == (ssize_t)bs) {
-        if (running != 1) {
-            LOG_INFO("image file exit when background downloading");
+        if (!running) {
+            LOG_INFO("file destroyed when background downloading");
             return -1;
         }
 
@@ -136,13 +135,7 @@ ssize_t filecopy(IFile *infile, IFile *outfile, size_t bs, int retry_limit, int 
     return offset;
 }
 
-void BkDownload::switch_to_local_file() {
-    std::string path = dir + "/" + COMMIT_FILE_NAME;
-    ((ISwitchFile *)sw_file)->set_switch_file(path.c_str());
-    LOG_DEBUG("set switch tag done. (localpath: `)", path);
-}
-
-bool BkDownload::download_done() {
+bool download_done(const std::string &digest, std::string &downloaded_file, std::string &dst_file) {
     auto lfs = new_localfs_adaptor();
     if (!lfs) {
         LOG_ERROR("new_localfs_adaptor() return NULL");
@@ -150,75 +143,53 @@ bool BkDownload::download_done() {
     }
     DEFER({ delete lfs; });
 
-    std::string old_name, new_name;
-    old_name = dir + "/" + DOWNLOAD_TMP_NAME;
-    new_name = dir + "/" + COMMIT_FILE_NAME;
-
     // verify sha256
     auto th = photon::CURRENT;
     std::string shares;
     std::thread sha256_thread([&, th](){
-        shares = sha256sum(old_name.c_str());
+        shares = sha256sum(downloaded_file.c_str());
         photon::safe_thread_interrupt(th, EINTR, 0);
     });
     sha256_thread.detach();
     photon::thread_usleep(-1UL);
     if (shares != digest) {
-        LOG_ERROR("verify checksum ` failed (expect: `, got: `)", old_name, digest, shares);
+        LOG_ERROR("verify checksum ` failed (expect: `, got: `)", downloaded_file, digest, shares);
         return false;
     }
 
-    int ret = lfs->rename(old_name.c_str(), new_name.c_str());
+    int ret = lfs->rename(downloaded_file.c_str(), dst_file.c_str());
     if (ret != 0) {
-        LOG_ERROR("rename(`,`), `:`", old_name, new_name, errno, strerror(errno));
-        return false;
+        LOG_ERROR_RETURN(0, false, "rename(`,`), `:`", downloaded_file, dst_file, errno, strerror(errno));
     }
-    LOG_INFO("download done. rename(`,`) success", old_name, new_name);
+    LOG_INFO("download done. rename(`,`) success", downloaded_file, dst_file);
     return true;
 }
 
-bool BkDownload::download(int &running) {
-    if (check_downloaded(dir)) {
-        switch_to_local_file();
-        return true;
-    }
-
-    if (download_blob(running)) {
-        if (!download_done())
-            return false;
-        switch_to_local_file();
-        return true;
-    }
-    return false;
-}
-
-bool BkDownload::lock_file() {
-    if (lock_files.find(dir) != lock_files.end()) {
-        LOG_WARN("failded to lock download path:`", dir);
+bool download_blob(FileSystem::IFile *source_file, std::string &digest, std::string &dst_file,
+                        int delay, int max_MB_ps, int max_try, bool &running) {
+    photon::thread_sleep(delay);
+    if (!running)
         return false;
+
+    while (downloading) {
+        photon::thread_sleep(1);
     }
-    lock_files.insert(dir);
-    return true;
-}
 
-void BkDownload::unlock_file() {
-    lock_files.erase(dir);
-}
+    downloading = true;
+    DEFER(downloading = false;);
 
-bool BkDownload::download_blob(int &running) {
-    std::string dl_file_path = dir + "/" + DOWNLOAD_TMP_NAME;
-    try_cnt--;
-    FileSystem::IFile *src = src_file;
-    if (limit_MB_ps > 0) {
+    std::string dl_file_path = dst_file + ".download";
+    FileSystem::IFile *src = source_file;
+    if (max_MB_ps > 0) {
         FileSystem::ThrottleLimits limits;
-        limits.R.throughput = limit_MB_ps * 1024UL * 1024; // MB
+        limits.R.throughput = max_MB_ps * 1024UL * 1024; // MB
         limits.R.block_size = 1024UL * 1024;
         limits.time_window = 1UL;
         src = FileSystem::new_throttled_file(src, limits);
     }
     DEFER({
-        if (limit_MB_ps > 0)
-            delete src;
+        if (max_MB_ps > 0)
+             delete src;
     });
 
     auto dst = FileSystem::open_localfile_adaptor(dl_file_path.c_str(), O_RDWR | O_CREAT, 0644);
@@ -227,66 +198,18 @@ bool BkDownload::download_blob(int &running) {
     }
     DEFER(delete dst;);
 
-    auto res = filecopy(src, dst, 1024UL * 1024, 1, running);
-    if (res < 0)
-        return false;
-    return true;
-}
-
-void bk_download_proc(std::list<BKDL::BkDownload *> &dl_list, uint64_t delay_sec, int &running) {
-    LOG_INFO("BACKGROUND DOWNLOAD THREAD STARTED.");
-    uint64_t time_st = photon::now;
-    while (photon::now - time_st < delay_sec * 1000000) {
-        photon::thread_usleep(200 * 1000);
-        if (running != 1)
-            break;
-    }
-
-    while (!dl_list.empty()) {
-        if (running != 1) {
-            LOG_WARN("image exited, background download exit...");
-            break;
-        }
-        photon::thread_usleep(200 * 1000);
-
-        BKDL::BkDownload *dl_item = dl_list.front();
-        dl_list.pop_front();
-
-        LOG_INFO("start downloading for dir `", dl_item->dir);
-
-        if (!dl_item->lock_file()) {
-            dl_list.push_back(dl_item);
+    while (max_try-- > 0) {
+        auto res = filecopy(src, dst, 1024UL * 1024, 1, running);
+        if (res < 0) {
+            LOG_WARN("retry download for file `", dst_file);
             continue;
         }
-
-        bool succ = dl_item->download(running);
-        dl_item->unlock_file();
-
-        if (running != 1) {
-            LOG_WARN("image exited, background download exit...");
-            delete dl_item;
-            break;
+        if (download_done(digest, dl_file_path, dst_file)) {
+            return true;
         }
-
-        if (!succ && dl_item->try_cnt > 0) {
-            dl_list.push_back(dl_item);
-            LOG_WARN("download failed, push back to download queue and retry `", dl_item->dir);
-            continue;
-        }
-        LOG_DEBUG("finish downloading or no retry any more: `, retry_cnt: `", dl_item->dir,
-                 dl_item->try_cnt);
-        delete dl_item;
+        LOG_WARN("retry download for file `", dst_file);
     }
-
-    if (!dl_list.empty()) {
-        LOG_INFO("DOWNLOAD THREAD EXITED in advance, delete dl_list.");
-        while (!dl_list.empty()) {
-            BKDL::BkDownload *dl_item = dl_list.front();
-            dl_list.pop_front();
-            delete dl_item;
-        }
-    }
-    LOG_DEBUG("BACKGROUND DOWNLOAD THREAD EXIT.");
+    return false;
 }
 
 } // namespace BKDL
