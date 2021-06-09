@@ -402,6 +402,9 @@ public:
             args.parent_uuid.parse(parent_uuid.c_str(), parent_uuid.size());
         args.virtual_size = vsize;
         auto file = ::create_file_rw(args, true);
+        char uu[37]{};
+        args.uuid.to_string(uu, 37);
+        cout << "create a layer. UUID: "<< uu<<endl;
         cout << "enable group commit of index for RW file" << endl;
         file->set_index_group_commit(4096);
         randwrite(file, FLAGS_nwrites);
@@ -450,7 +453,7 @@ public:
         delete file;
         auto tmp = ::open_file_ro(as);
         UUID uuid;
-        tmp->get_uuid(uuid, 1);
+        tmp->get_uuid(uuid, 0);
         parent_uuid = UUID::String(uuid).c_str();
         LOG_INFO("reset parent_uuid: `", parent_uuid.c_str());
         if (compress) {
