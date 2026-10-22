@@ -421,7 +421,7 @@ static int dev_open(struct tcmu_device *dev) {
     tcmu_dev_set_block_size(dev, file->block_size);
     tcmu_dev_set_num_lbas(dev, file->num_lbas);
     tcmu_dev_set_unmap_enabled(dev, true);
-    tcmu_dev_set_write_cache_enabled(dev, false);
+    tcmu_dev_set_write_cache_enabled(dev, !file->read_only);
     tcmu_dev_set_write_protect_enabled(dev, file->read_only);
 
     odev->loop = new TCMUDevLoop(dev);
