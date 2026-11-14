@@ -1314,9 +1314,10 @@ public:
         auto commit_ret = flush_index_log();
         if (commit_ret != 0)
             return commit_ret;
-        m_files[m_rw_tag]->fsync();
+        if (m_files[m_rw_tag]->fsync() != 0)
+            return -1;
         if (m_log)
-            m_log->file()->fsync();
+            return m_log->file()->fsync();
         return 0;
     }
     virtual int fdatasync() override {

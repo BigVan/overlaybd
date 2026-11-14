@@ -130,3 +130,5 @@ Overlaybd 提供了一种日志结构（log-structured）可写层和一种稀�
 /opt/overlaybd/bin/overlaybd-zfile ${commit_file} ${zfile}
 ```
 生成的 zfile 可作为下层使用，并支持在线解压。
+
+将独立 VHDX 整盘转换为普通 OverlayBD 或 ZFile，参见 [VHDX 转换说明](vhdx-conversion_zh.md)。

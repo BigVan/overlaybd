@@ -4,6 +4,8 @@ link_directories($ENV{GFLAGS}/lib)
 include_directories($ENV{GTEST}/googletest/include)
 link_directories($ENV{GTEST}/lib)
 
+add_subdirectory(vhdx_convert)
+
 add_executable(image_service_test image_service_test.cpp)
 target_include_directories(image_service_test PUBLIC
     ${PHOTON_INCLUDE_DIR}

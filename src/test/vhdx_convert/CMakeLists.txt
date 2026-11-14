@@ -1,0 +1,33 @@
+add_executable(vhdx_converter_test vhdx_converter_test.cpp)
+target_link_libraries(vhdx_converter_test gtest pthread vhdx_converter)
+set_property(TARGET vhdx_converter_test PROPERTY CXX_STANDARD 17)
+add_test(NAME vhdx_converter_test COMMAND ${EXECUTABLE_OUTPUT_PATH}/vhdx_converter_test)
+
+add_executable(verify_delta_reconversion verify_delta_reconversion.cpp)
+target_link_libraries(verify_delta_reconversion vhdx_converter)
+
+find_path(LIBVHDI_INCLUDE_DIR libvhdi.h)
+find_library(LIBVHDI_LIBRARY vhdi)
+add_library(image_verifier STATIC image_verifier.cpp)
+target_include_directories(image_verifier PUBLIC ${PHOTON_INCLUDE_DIR})
+target_link_libraries(image_verifier photon_static overlaybd_lib)
+if (LIBVHDI_INCLUDE_DIR AND LIBVHDI_LIBRARY)
+    target_compile_definitions(image_verifier PRIVATE VHDX_TEST_LIBVHDI)
+    target_include_directories(image_verifier PRIVATE ${LIBVHDI_INCLUDE_DIR})
+    target_link_libraries(image_verifier ${LIBVHDI_LIBRARY})
+endif()
+
+add_executable(verify_image verify_image.cpp)
+target_link_libraries(verify_image image_verifier)
+
+add_executable(verify_vhdx_layers verify_vhdx_layers.cpp)
+target_include_directories(verify_vhdx_layers PRIVATE ${RAPIDJSON_INCLUDE_DIRS})
+target_link_libraries(verify_vhdx_layers image_verifier)
+
+add_executable(image_verifier_test image_verifier_test.cpp)
+target_link_libraries(image_verifier_test image_verifier gtest pthread)
+find_program(IMAGE_VERIFIER_QEMU_IMG qemu-img)
+if (LIBVHDI_INCLUDE_DIR AND LIBVHDI_LIBRARY AND IMAGE_VERIFIER_QEMU_IMG)
+    target_compile_definitions(image_verifier_test PRIVATE IMAGE_VERIFIER_QEMU_IMG="${IMAGE_VERIFIER_QEMU_IMG}")
+endif()
+add_test(NAME image_verifier_test COMMAND ${EXECUTABLE_OUTPUT_PATH}/image_verifier_test)

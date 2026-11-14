@@ -16,9 +16,13 @@ add_executable(overlaybd-zfile overlaybd-zfile.cpp)
 target_include_directories(overlaybd-zfile PUBLIC ${PHOTON_INCLUDE_DIR})
 target_link_libraries(overlaybd-zfile photon_static overlaybd_lib)
 
+add_library(vhdx_converter vhdxconverter.cpp)
+target_include_directories(vhdx_converter PUBLIC ${PHOTON_INCLUDE_DIR})
+target_link_libraries(vhdx_converter photon_static overlaybd_lib)
+
 add_executable(overlaybd-apply overlaybd-apply.cpp qcow2converter.cpp)
 target_include_directories(overlaybd-apply PUBLIC ${PHOTON_INCLUDE_DIR} ${RAPIDJSON_INCLUDE_DIRS})
-target_link_libraries(overlaybd-apply photon_static overlaybd_lib overlaybd_image_lib checksum_lib z)
+target_link_libraries(overlaybd-apply photon_static overlaybd_lib overlaybd_image_lib checksum_lib z vhdx_converter)
 set_target_properties(overlaybd-apply PROPERTIES INSTALL_RPATH "/opt/overlaybd/lib")
 
 add_executable(turboOCI-apply turboOCI-apply.cpp)

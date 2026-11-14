@@ -41,6 +41,7 @@
 #include "comm_func.h"
 #include "sha256file.h"
 #include "qcow2converter.h"
+#include "vhdxconverter.h"
 
 
 using namespace std;
@@ -84,22 +85,47 @@ int main(int argc, char **argv) {
     std::string image_config_path, input_path, gz_index_path, config_path, sha256_checksum;
     string tarheader;
     bool raw = false, mkfs = false, verbose = false, qcow2 = false, extract_rootfs = true;
+    bool vhdx = false;
 
-    CLI::App app{"this is overlaybd-apply, apply OCIv1 tar layer or qcow2 image to overlaybd format"};
+    CLI::App app{"this is overlaybd-apply, apply OCIv1 tar layer, qcow2 or vhdx image to overlaybd format"};
     app.add_flag("--raw", raw, "apply to raw image")->default_val(false);
     app.add_flag("--mkfs", mkfs, "mkfs before apply")->default_val(false);
     app.add_flag("--from_qcow2", qcow2, "convert from qcow2 image file instead of tar")->default_val(false);
-    app.add_flag("--extract-rootfs,!--no-extract-rootfs", extract_rootfs,
-                 "Only extract rootfs partitions (default: on). "
+    app.add_flag("--from_vhdx", vhdx, "convert a clean VHDX disk or delta to a new empty append layer; no parent needed")
+        ->excludes("--from_qcow2")->excludes("--raw")->excludes("--mkfs");
+    auto rootfs_option = app.add_flag("--extract-rootfs,!--no-extract-rootfs", extract_rootfs,
+                 "Only extract rootfs partitions for qcow2 (default: on). "
                  "Use --no-extract-rootfs to convert entire disk.");
 
     app.add_flag("--verbose", verbose, "output debug info")->default_val(false);
     app.add_option("--service_config_path", config_path, "overlaybd image service config path")->type_name("FILEPATH")->check(CLI::ExistingFile)->default_val("/etc/overlaybd/overlaybd.json");
     app.add_option("--gz_index_path", gz_index_path, "build gzip index if layer is gzip, only used with turboOCIv1")->type_name("FILEPATH");
     app.add_option("--checksum", sha256_checksum, "sha256 checksum for origin uncompressed data");
-    app.add_option("input_path", input_path, "input OCIv1 tar layer path")->type_name("FILEPATH")->check(CLI::ExistingFile)->required();
+    app.add_option("input_path", input_path, "input tar layer or virtual disk path")->type_name("FILEPATH")->check(CLI::ExistingFile)->required();
     app.add_option("image_config_path", image_config_path, "overlaybd image config path")->type_name("FILEPATH")->check(CLI::ExistingFile)->required();
     CLI11_PARSE(app, argc, argv);
+
+    VHDX::Reader vhdx_reader;
+    if (vhdx) {
+        if ((rootfs_option->count() && extract_rootfs) || app.count("--gz_index_path") ||
+            app.count("--checksum")) {
+            fprintf(stderr, "VHDX conversion does not support rootfs extraction or tar options\n");
+            return 1;
+        }
+        if (vhdx_reader.open(input_path.c_str()) != 0)
+            return 1;
+        if (vhdx_reader.virtual_size() % LSMT::ALIGNMENT4K) {
+            fprintf(stderr, "VHDX virtual size must be 4K aligned\n");
+            return 1;
+        }
+        ImageConfigNS::ImageConfig target_config;
+        if (!target_config.ParseJSON(image_config_path) || !target_config.is_valid() ||
+            !target_config.lowers().empty() || target_config.upper().data().empty() ||
+            target_config.upper().index().empty() || !target_config.upper().target().empty()) {
+            fprintf(stderr, "VHDX conversion requires a writable layer without lowers or a warp target\n");
+            return 1;
+        }
+    }
 
     set_log_output_level(verbose ? 0 : 1);
     photon::init(photon_event_engine_from_config(config_path), photon::INIT_IO_DEFAULT);
@@ -121,6 +147,16 @@ int main(int argc, char **argv) {
         delete imgfile;
         delete imgservice;
     });
+
+    if (vhdx) {
+        auto target = static_cast<ImageFile *>(imgfile);
+        if (target->read_only || target->m_status != 1) {
+            fprintf(stderr, "VHDX target is not writable\n");
+            return 1;
+        }
+        return VHDX::convert_to_layer(vhdx_reader,
+            static_cast<LSMT::IFileRW *>(target->get_base()), verbose) == 0 ? 0 : 1;
+    }
 
     if(qcow2){
         int ret = convert_qcow2_to_imgfile(input_path.c_str(), imgfile,
